@@ -1,3 +1,3 @@
-# bp_nn
+# ml_mort_cardiac
 
-Repository for the project _Machine Learning Models Incorporating Dynamic Intraoperative Variables in Predicting Mortality after Cardiac Surgery_
+Repository for the project _“Machine Learning models with preoperative risk factors and IOH parameters predict mortality following cardiac surgery”_
