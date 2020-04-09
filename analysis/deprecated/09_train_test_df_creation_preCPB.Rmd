@@ -1,0 +1,62 @@
+---
+title: "03_train_test_df_creation"
+author: "Miguel Armengol"
+date: "2/20/2019"
+output: html_notebook
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Loading libraries
+
+```{r message=FALSE, warning=FALSE}
+library(dplyr)
+library(keras)
+library(tfruns)
+library(caret)
+```
+
+# Creating de-identified id
+
+```{r}
+abp_mean_precpb_all_data['id']<- seq.int(nrow(abp_mean_precpb_all_data))
+abp_mean_precpb_all_data_deid<-abp_mean_precpb_all_data
+abp_mean_precpb_all_data_deid$Case_Name<-NULL
+```
+
+# Spliting de-identified data into testing and training, balanced version.
+
+We want the data to be sampled randomly but always the same way and we want to be sure that train and test must be balanced.
+
+```{r}
+## set the seed to make our partition reproducible
+set.seed(123)
+# createDataPartition: "the random sampling is done within the levels of y when y is a factor in an attempt to balance the class distributions within the splits."
+## 75% of the sample size
+train_precpb_idx <- createDataPartition(as.factor(abp_mean_precpb_all_data_deid$Death), times = 1, p = 0.75, list=F)
+
+train_precpb <- abp_mean_precpb_all_data_deid[train_precpb_idx, ]
+test_precpb <- abp_mean_precpb_all_data_deid[-train_precpb_idx, ]
+
+round(prop.table(table(train_precpb$Death)),2)
+round(prop.table(table(test_precpb$Death)),2)
+```
+
+## Exporting datasets
+
+```{r}
+write.csv(train_precpb,'../data/train_precpb.csv',row.names = F)
+write.csv(test_precpb,'../data/test_precpb.csv',row.names = F)
+```
+
+
+
+
+
+
+
+
+
+

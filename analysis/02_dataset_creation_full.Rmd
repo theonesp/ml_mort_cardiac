@@ -1,0 +1,404 @@
+---
+title: "02_dataset_creation_full"
+author: "Miguel Armengol"
+date: "2/20/2019"
+output:
+  html_document:
+    toc: true
+    theme: united
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Loading libraries
+
+```{r message=FALSE, warning=FALSE}
+library(dplyr)
+library(feather)
+library(knitr)
+library(plotly)
+library(sqldf)
+library(zoo)
+library(data.table)
+library(summarytools)
+library(imputeTS)
+library(pracma)
+library(entropy)
+```
+
+# abp_mean_full_surgery
+
+## Filtering out
+
+### Duration Surgery (min) calculation 
+
+#### First and End Times of VitalSigns, VitalSigns_Times creation
+
+*Run 011_fixing_surgery_times.Rmd before going on (the 011 file won't be included on github since it contains PHI)*
+
+```{r}
+library(dplyr)
+
+    abp_mean_First <- abp_mean %>% 
+    group_by(Case_Name) %>% 
+    dplyr::select(c(Case_Name,Time)) %>%
+    arrange(Time)%>%
+    filter(!duplicated(Case_Name)) 
+    colnames(abp_mean_First) <- c('Case_Name', 'abp_mean_First_Time')
+    
+    abp_mean_Last <- abp_mean %>% 
+    group_by(Case_Name) %>% 
+    dplyr::select(c(Case_Name,Time)) %>%
+    arrange(desc(Time))%>%
+    filter(!duplicated(Case_Name)) 
+    colnames(abp_mean_Last) <- c('Case_Name', 'abp_mean_Last_Time')
+    
+    abp_mean_Times<-merge(abp_mean_First, abp_mean_Last)
+    
+```
+
+##### Duration times
+
+```{r}
+abp_mean_Times['duration_Surgery_min']<-as.numeric(difftime(abp_mean_Times$`abp_mean_Last_Time`,abp_mean_Times$`abp_mean_First_Time`), units="mins")
+```
+
+### Creating lag and diff columns 
+
+```{r message=FALSE, warning=FALSE}
+abp_mean<-abp_mean%>%
+  group_by(Case_Name)%>%
+   mutate(
+      time_lag=lag(Time)
+     ,diff= abs(as.numeric(time_lag-Time))
+   )
+```
+
+### Ploting sampling time
+
+```{r}
+abp_mean%>%
+group_by(Case_Name)%>%
+filter(diff>5*60)%>%
+  summarise(n_distinct(Case_Name))
+``` 
+
+The median surgery length is 283.5 minutes.
+We have a total of 174 (3%) cases with missing sampling times > 5 minutes (big 'holes' without data).
+*We have decided to exclude those cases.*
+
+### Excluding cases with missing sampling gaps  
+
+We are excluding gaps > 5 minutes or surgery length < 60 minutes.
+
+According to our previous work with this data-set, times-tamps indicating surgeries lasted less than 60 minutes might be an error from the monitor that is recording the vitals, thus we are excluding those cases. 
+
+```{r}
+# Creating the not in function
+
+'%!in%' <- function(x,y)!('%in%'(x,y))
+
+cases_to_exclude<-union_all(
+abp_mean%>%
+group_by(Case_Name)%>%
+filter(diff>5*60)%>%
+  select(Case_Name)
+,
+abp_mean_Times%>%
+filter(duration_Surgery_min <= 60)%>%
+  select(Case_Name)
+)
+
+cases_to_exclude<-unique(cases_to_exclude$Case_Name)
+
+abp_mean_filtered<-abp_mean%>%
+  filter(Case_Name %!in% cases_to_exclude)
+```
+
+5979 - 186 (missing sampling gaps > 5 minutes or surgery length < 60 minutes) = 5793
+
+### Expanding data points
+
+Expanding data points when several missing time-stamps are found
+
+```{r}
+  abp_mean_full_times<-as.data.frame(matrix(0,ncol = 1, nrow = 0))
+  colnames(abp_mean_full_times)<-c('Time')
+
+  for (i in 1:nrow(abp_mean_Times)) {
+  correct_sequence<-as.data.frame(seq(abp_mean_Times$abp_mean_First_Time[i],abp_mean_Times$abp_mean_Last_Time[i], by = '15 secs'))
+  correct_sequence['Case_Name']<-abp_mean_Times$Case_Name[i]
+  abp_mean_full_times<-rbind(correct_sequence,abp_mean_full_times)
+  }
+  colnames(abp_mean_full_times)[1]<-'Time'
+  
+# excluding cases as previously defined, also from this dataframe
+  abp_mean_full_times<-abp_mean_full_times%>%
+  filter(Case_Name %!in% cases_to_exclude)   
+
+abp_mean_expanded<-left_join(abp_mean_full_times,abp_mean_filtered%>%select('Case_Name','Time','Value'), by = c('Case_Name','Time'))
+```
+
+### Excluding cases with invalid cpb, precpb, postcpb or outsidecpb data-points
+
+```{r}
+# cases with valid cpb data
+abp_mean_valid_cases1<-inner_join(  abp_mean_expanded,  AllPeriodsDF)%>%
+  filter(Time>=CPB_Begin_Time & Time<=CPB_End_Time)%>%
+  distinct(Case_Name)
+
+# cases with valid outsidecpb data
+abp_mean_valid_cases2<-inner_join(  abp_mean_expanded,  AllPeriodsDF)%>%
+  filter(Time< CPB_Begin_Time | Time>CPB_End_Time)%>%
+  distinct(Case_Name)
+
+# cases with valid precpb data
+abp_mean_valid_cases3<-inner_join(  abp_mean_expanded,  AllPeriodsDF)%>%
+  filter(Time< CPB_Begin_Time)%>%
+  distinct(Case_Name)
+
+# cases with valid postcpb data
+abp_mean_valid_cases4<-inner_join(  abp_mean_expanded,  AllPeriodsDF)%>%
+  filter(Time > CPB_Begin_Time)%>%
+  distinct(Case_Name)
+
+valid_cases<-inner_join(abp_mean_valid_cases1,abp_mean_valid_cases2)
+valid_cases<-inner_join(valid_cases,abp_mean_valid_cases3)
+valid_cases<-inner_join(valid_cases,abp_mean_valid_cases4)
+```
+
+### Selecting only valid cases from our dataset
+
+```{r}
+abp_mean_expanded<-inner_join(abp_mean_expanded , valid_cases)
+```
+
+
+### Artifact Removal
+
+Remove artifacts using the following rules, in order: 
+
+(a) SBP (Systolic Blood Pressure) greater than or equal to 300 or SBP less than or equal to 20 mmhg.
+(b) SBP less than or equal to DBP + 5 mmhg.
+(c) DBP (Diastolic Blood Pressure) less than or equal to 5 mmhg or DBP greater than or equal to 225 mmhg.
+
+_Ref: Salmasi, V., Maheshwari, K., Yang, D., Mascha, E. J., Singh, A., Sessler, D. I., & Kurz, A. (2017). Relationship between Intraoperative Hypotension, Defined by Either Reduction from Baseline or Absolute Thresholds, and Acute Kidney and Myocardial Injury after Noncardiac SurgeryA Retrospective Cohort Analysis. Anesthesiology: The Journal of the American Society of Anesthesiologists, 126(1), 47-65._
+
+```{r}
+#MAP artifact removal
+abp_mean_expanded$Value[abp_mean_expanded$Value <=  0]<-NA
+abp_mean_expanded$Value[abp_mean_expanded$Value >=  255]<-NA
+```
+
+
+### Imputing intra-surgery missing data
+
+#### Median imputation
+
+We used median imputation since sometimes the first values of a dataframe are all artifacts (so they were removed), therefore using LPV would give NA to all of them.
+
+```{r}
+impute.median <- function(x) replace(x, is.na(x), median(x, na.rm = TRUE))
+abp_mean_expanded<-abp_mean_expanded%>%
+  group_by(Case_Name)%>% 
+    mutate(
+        Value_imputed = as.integer(impute.median(Value))
+    )
+```
+
+LVP and linear interpolation methods can also be tried for imputation.
+
+### Reshaping
+
+```{r}
+# I'm creating a counter column so we know how many datapoints we have per case (we'll later use this for reshaping the dataframe)
+abp_mean_expanded_count<-abp_mean_expanded %>%
+  group_by(Case_Name) %>%
+  mutate(
+    ones = 1,
+    counter = cumsum(ones)
+    )
+
+# Reshaping the table so we have 1 row per patient and one column each data point
+abp_mean_reshaped<-dcast(abp_mean_expanded_count, Case_Name ~ counter, value.var = "Value_imputed")
+```
+
+Each observation (row) corresponds to one case, there are 3650 data points (variables=columns), 1 every 15 seconds. 
+This is because the longest case contains 3650 data points using ST 15 seconds. 
+Cases shorter than this one will contain NA from the last time-stamp of the surgery until data-point number 3650.
+
+'data.frame':	5793 obs. of  3651 variables:
+ $ Case_Name: int  1 2 3 4 ...
+ $ 1        : int  66 63 23 216 197 64 72 73 78 39 ...
+ $ 2        : int  66 63 121 69 93 64 72 73 78 98 ...
+ $ 3        : int  66 63 193 69 91 64 72 73 78 125 ...
+ $ 4        : int  66 63 103 67 91 64 72 73 78 91 ...
+ $ 5        : int  66 63 103 70 90 64 72 73 78 79 ...
+ $ 6        : int  66 63 103 73 90 64 72 73 78 77 ...
+ $ 7        : int  66 63 101 70 87 64 5 73 73 81 ...
+ $ 8        : int  66 63 108 69 83 64 85 73 70 82 ...
+ $ 9        : int  66 63 108 67 86 64 100 73 72 85 ...
+ $ 10       : int  66 63 106 67 85 64 101 73 75 85 ...
+ $ 11       : int  66 63 111 68 84 64 104 73 76 81 ...
+ $ 12       : int  66 63 122 69 90 56 100 73 78 82 ...
+ $ 13       : int  66 63 129 78 99 60 97 73 76 81 ...
+ $ 14       : int  115 63 112 78 97 78 96 73 78 80 ...
+ $ 15       : int  86 63 99 70 93 77 94 198 76 82 ...
+
+### Imputing data with a special value.
+
+Instead of removing the rows with NaN values when surgery finishes, we can replace all NaN values with a specific value that does not appear naturally in the input, such as -1.
+The problem can be modeled as-is and we can encourage the model to learn that a specific value means “missing.” 
+
+Ref: https://machinelearningmastery.com/handle-missing-timesteps-sequence-prediction-problems-python/
+
+#### Replacing NA with -1
+
+```{r}
+abp_mean_reshaped[is.na(abp_mean_reshaped)]<-(-1) 
+```
+
+### Entropy
+
+```{r}
+abp_mean_reshaped['entropy']<-round(apply(abp_mean_reshaped[2:ncol(abp_mean_reshaped)], 1 , entropy ) , 2)
+```
+
+189 (3%) of the cases are outliers according the the boxplot upper fence.
+
+_In the end we are not removing data beyond outliers_
+
+#### Removing cases beyond outliers
+
+_In the end we are not removing data beyond outliers_
+
+
+```{r eval=FALSE, include=FALSE}
+abp_mean_no_outliers<-abp_mean_reshaped[,1:1791] # we need to add 1 (1790+1) since the first column is Case_Name
+```
+
+#### Imputing after surgery missing data
+
+Linear interpolation imputation works vertically, so we transpose the dataframe to have one column per case, instead of one row per case.
+
+```{r eval=FALSE, include=FALSE}
+abp_mean_no_outliers_t<-as.data.frame(t(abp_mean_no_outliers[,-1]))
+colnames(abp_mean_no_outliers_t) <- abp_mean_no_outliers[,1]
+abp_mean_no_outliers_t_imputed<-na.interpolation(abp_mean_no_outliers_t, option = "linear")
+
+abp_mean_no_outliers_imputed<-as.data.frame(t(abp_mean_no_outliers_t_imputed))
+abp_mean_no_outliers_imputed['Case_Name']<-rownames(abp_mean_no_outliers_imputed)
+row.names(abp_mean_no_outliers_imputed)<-1:nrow(abp_mean_no_outliers_imputed)
+
+# re-ordering columns, we want Case_Name to be the first column
+
+desired_order<-1791
+desired_order<-c(desired_order,1:1790)
+abp_mean_no_outliers_imputed<-abp_mean_no_outliers_imputed[,desired_order]
+```
+
+
+
+### Joining with other data-sets
+ 
+```{r}
+abp_mean_all_data<-inner_join(abp_mean_reshaped,FinalHemodynamicsDataset%>%
+                          dplyr::select( Case_Name
+                                        ,Gender
+                                        ,Age
+                                        ,Category
+                                        
+                                        ,duration_Surgery_min
+                                        ,duration_CPB_min
+                                        ,duration_outsideCPB_min
+                                        ,duration_preCPB_min
+                                        ,duration_postCPB_min 
+                                        
+                                        ,STS_RiskAlgorithm_multiple_imp
+                                        ,STS_RiskAlgorithm_median_imp
+                                        ,STS_RiskAlgorithm
+                                        ,total_pressors_formula_mg
+                                        
+                                        # categorical variables
+                                        ,Q_total_pressors_formula_mg
+                                        ,T_STS_RiskAlgorithm_median_imp
+                                        ,T_STS_RiskAlgorithm_multiple_imp
+                                        ,Q_AUC65MAP_total_mmHgmin
+                                        ,Q_TWA65MAP_total_mmHg
+                                        ,Q_AUC65MAP_CPB_mmHgmin
+                                        ,Q_AUC65MAP_outsideCPB_mmHgmin
+                                        ,Q_TWA65MAP_CPB_mmHg
+                                        ,Q_TWA65MAP_outsideCPB_mmHg
+                                        
+                                                                                
+                                        # TWA variables
+                                        ,TWA65MAP_total_mmHg
+                                        ,TWA65MAP_CPB_mmHg
+                                        ,TWA65MAP_outsideCPB_mmHg
+                                        ,TWA65MAP_preCPB_mmHg 
+                                        ,TWA65MAP_postCPB_mmHg 
+                                        
+
+                                                                                                                                                                ,delta_HCT_pct_median_imp
+                                        ,mean_ef_median_imp
+                                        ,Cross_Clamp_Time_imp
+                                        
+                                        ,AUC65MAP_total_mmHgmin
+                                        ,AUC65MAP_CPB_mmHgmin
+                                        ,AUC65MAP_outsideCPB_mmHgmin
+                                        ,AUC65MAP_preCPB_mmHgmin 
+                                        ,AUC65MAP_postCPB_mmHgmin                                        
+                                        # Outcomes
+                                        ,Any_MAE
+                                        ,Renal_Failure
+                                        ,Death
+                                        ,Stroke
+                                        ,RFDS
+                                        ,RFD
+                                        ,DS
+                                        ,RFS
+
+                                        
+                           ))
+
+```
+
+### Removing columns where 100% is NA
+
+```{r}
+#abp_mean_all_data <- abp_mean_all_data[,colSums(is.na(abp_mean_all_data))<nrow(abp_mean_all_data)]
+```
+
+
+### Imputing mising values in mean_ef_median_imp
+
+there were some mising values in mean_ef_median_imp, imputing mean_ef_median_imp for 81 cases missing
+
+```{r}
+abp_mean_all_data$mean_ef_median_imp[is.na(abp_mean_all_data$mean_ef_median_imp)]<-round(mean(abp_mean_all_data$mean_ef_median_imp,na.rm = T),2)
+```
+
+### Maping variables
+
+We don't need all the variables in our dataset to be numbers anymore.
+
+```{r}
+#abp_mean_all_data$Gender<-plyr::revalue(abp_mean_all_data$Gender,c('Female'=1,'Male'=2))
+#abp_mean_all_data$Category<-plyr::revalue(abp_mean_all_data$Category,c('Aortic Surgery'=1,'CABG'=2,'CABG + Valve'=3,'Other'=3,'Valve'=4))
+```
+
+### Generating report
+
+```{r}
+view(dfSummary(abp_mean_all_data))
+```
+
+### Writing dataframe
+
+```{r}
+write.csv(abp_mean_all_data,'abp_mean_all_data.csv',row.names = F)
+```
+ 
+

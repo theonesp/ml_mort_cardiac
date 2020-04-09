@@ -1,0 +1,128 @@
+---
+title: "01_data_exploration"
+author: "Miguel Armengol"
+date: "2/20/2019"
+output:
+  html_document:
+    toc: true
+    theme: united
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Loading libraries
+
+```{r message=FALSE, warning=FALSE}
+library(dplyr)
+library(feather)
+library(knitr)
+library(plotly)
+library(sqldf)
+library(zoo)
+library(xts)
+```
+
+# Loading the data
+
+```{r message=FALSE, warning=FALSE}
+FinalHemodynamicsDataset<-readRDS("~/MEGA/Boston/BIDMC-Harvard/Phenotyping/Dataset Creation/FinalHemodynamicsDataset.rds")
+df_vitals<-read_feather("/Users/marmengol/BIG FILES/neural networks/vitals.feather")
+```
+
+## Studying the data
+
+### Vitalsigns Level
+
+#### Data counts
+
+```{r}
+#source_counts<-data.frame(table(df_vitals$Source_Name))
+table(df_vitals$Source_Name)
+```
+
+
+Let's focus on:
+
+
+| Src          | Freq    |
+|--------------|---------|
+| HeartRate    | 6892126 |
+| ABPMean      | 6851284 |
+| PAPMean      | 6166719 |
+| PulseRate    | 5517302 |
+| PulseRateII  | 5185806 |
+| ABPDiastolic | 4992502 |
+| ABPSystolic  | 4992444 |
+
+#### Data distribution
+
+```{r}
+tapply(df_vitals$Value[df_vitals$Source_Name %in%  c( "Heart Rate"   
+ ,"ABP-Mean"     
+ ,"PAP-Mean"     
+ ,"Pulse Rate"   
+ ,"Pulse Rate II"
+ ,"ABP-Diastolic"
+ ,"ABP-Systolic" 
+ )], df_vitals$Source_Name[df_vitals$Source_Name %in%  c( "Heart Rate"   
+ ,"ABP-Mean"     
+ ,"PAP-Mean"     
+ ,"Pulse Rate"   
+ ,"Pulse Rate II"
+ ,"ABP-Diastolic"
+ ,"ABP-Systolic" 
+ )], summary)
+```
+
+#### Data minimum and maximum sampling time (s) 
+
+```{r echo=TRUE, message=FALSE, warning=FALSE}
+df_vitals_selected<-df_vitals%>%
+  filter(Source_Name %in%  c( "Heart Rate"   
+ ,"ABP-Mean"     #comment
+ ,"PAP-Mean"     
+ ,"Pulse Rate"   
+ ,"Pulse Rate II"
+ ,"ABP-Diastolic"
+ ,"ABP-Systolic" 
+ )
+ )
+
+df_vitals_selected<-df_vitals_selected%>%
+  arrange(Case_Name,Source_Name,Time)
+
+heart_rate<-subset(df_vitals_selected, df_vitals_selected$Source_Name=='Heart Rate')
+heart_rate<-arrange(heart_rate, Case_Name, Time)
+
+
+abp_mean<-subset(df_vitals_selected, df_vitals_selected$Source_Name=='ABP-Mean')
+abp_mean<-arrange(abp_mean, Case_Name, Time)
+
+
+pap_mean<-subset(df_vitals_selected, df_vitals_selected$Source_Name=="PAP-Mean")
+pap_mean<-arrange(pap_mean, Case_Name, Time)
+
+
+pulse_rate<-subset(df_vitals_selected,df_vitals_selected$Source_Name=="Pulse Rate")
+pulse_rate<-arrange(pulse_rate, Case_Name, Time)
+
+
+pulse_rateII<-subset(df_vitals_selected,df_vitals_selected$Source_Name=="Pulse Rate II")
+pulse_rateII<-arrange(pulse_rateII, Case_Name, Time)
+
+
+abp_diastolic<-subset(df_vitals_selected,df_vitals_selected$Source_Name=="ABP-Diastolic")
+abp_diastolic<-arrange(abp_diastolic, Case_Name, Time)
+
+
+abp_systolic<-subset(df_vitals_selected,  df_vitals_selected$Source_Name=="ABP-Systolic")
+abp_systolic<-arrange(abp_systolic, Case_Name, Time)
+
+
+```
+
+*Run file 011_fixing_surgery times after this.* !!!!!!
+
+

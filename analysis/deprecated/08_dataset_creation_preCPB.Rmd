@@ -1,0 +1,230 @@
+---
+title: "01_data_exploration"
+author: "Miguel Armengol"
+date: "2/20/2019"
+output:
+  html_document:
+    toc: true
+    theme: united
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+# Loading libraries
+
+```{r message=FALSE, warning=FALSE}
+library(dplyr)
+library(feather)
+library(knitr)
+library(plotly)
+library(sqldf)
+library(zoo)
+library(data.table)
+library(summarytools)
+library(imputeTS)
+library(entropy)
+```
+
+# Importing CPB times data 
+
+Data was imported from the project "Nonlinear Association of Intraoperative Vasopressor-Inotrope Dose and Hypotension Duration with Adverse Outcomes following Cardiac Surgery" where these variables were generated, code on how these variables were generated is available on the project [repo](https://github.com/theonesp/vasopressor_dose_mae/).
+
+- From our Vitalsign table, there are 390 Cases with no CPB Times Info.
+- Meaning there are 5318 Cases with all the info we need
+- We are not interested on Cases with NO CPB informations, thus we exclude this cases.
+
+*TIMEZONES NEED TO BE THE SAME ACROSS DATASETS AND COLUMNS*
+
+```{r}
+#AllPeriodsDF <- readRDS("~/MEGA/Boston/BIDMC-Harvard/bp_nn/AllPeriodsDF.rds")
+# before working with the dataset we need to make sure we are using the same timezone across all our columns and datasets
+sapply(AllPeriodsDF, function(x) attr(x,"tzone"))
+desiredtimezone<-attr(abp_mean_expanded$Time,"tzone")
+
+AllPeriodsDF$CPB_Begin_Time<-as.character(AllPeriodsDF$CPB_Begin_Time)
+AllPeriodsDF$CPB_Begin_Time<-as.POSIXct(AllPeriodsDF$CPB_Begin_Time, format='%Y-%m-%d %H:%M:%S', tz=desiredtimezone)
+
+AllPeriodsDF$CPB_End_Time<-as.character(AllPeriodsDF$CPB_End_Time)
+AllPeriodsDF$CPB_End_Time<-as.POSIXct(AllPeriodsDF$CPB_End_Time, format='%Y-%m-%d %H:%M:%S', tz=desiredtimezone)
+```
+
+ingest vitasigns_df!!!!!!! the other timestamps are corrupted
+
+# abp_mean_precpb
+
+*We are going to include only those cases we defined match our inclusion criteria as explained on '02_dataset_creation_full'*
+
+We use abp_mean_expanded as created in 02_dataset_creation_full.Rmd so values have already been processed:
+ - Excluding gaps > 5 minutes or surgery length < 60 minutes.
+ - Expanding data points when several missing time-stamps are found.
+ - Artifact Removal.
+ - Imputing intra-surgery missing data: Median imputation.
+
+# Subseting the data only to include CPB time
+
+```{r}
+abp_mean_expanded_precpb<-inner_join(  abp_mean_expanded,  AllPeriodsDF)%>%
+  filter(Time < CPB_Begin_Time)%>%
+  select(Time, Case_Name, Value,Value_imputed)
+```
+
+
+LVP and linear interpolation methods can also be tried for imputation.
+
+### Reshaping
+
+```{r}
+# I'm creating a counter column so we know how many datapoints we have per case (we'll later use this for reshaping the dataframe)
+abp_mean_expanded_precpb_count<-abp_mean_expanded_precpb %>%
+  group_by(Case_Name) %>%
+  mutate(
+    ones = 1,
+    counter = cumsum(ones)
+    )
+
+# Reshaping the table so we have 1 row per patient and one column each data point
+abp_mean_reshaped_precpb<-dcast(abp_mean_expanded_precpb_count, Case_Name ~ counter, value.var = "Value_imputed")
+```
+
+Each observation (row) corresponds to one case, there are 3650 data points (variables=columns), 1 every 15 seconds. 
+This is because the longest case contains 3650 data points using ST 15 seconds. 
+Cases shorter than this one will contain NA from the last time-stamp of the surgery until data-point number 3650.
+
+'data.frame':	5793 obs. of  3651 variables:
+ $ Case_Name: int  1 2 3 4 ...
+ $ 1        : int  66 63 23 216 197 64 72 73 78 39 ...
+ $ 2        : int  66 63 121 69 93 64 72 73 78 98 ...
+ $ 3        : int  66 63 193 69 91 64 72 73 78 125 ...
+ $ 4        : int  66 63 103 67 91 64 72 73 78 91 ...
+ $ 5        : int  66 63 103 70 90 64 72 73 78 79 ...
+ $ 6        : int  66 63 103 73 90 64 72 73 78 77 ...
+ $ 7        : int  66 63 101 70 87 64 5 73 73 81 ...
+ $ 8        : int  66 63 108 69 83 64 85 73 70 82 ...
+ $ 9        : int  66 63 108 67 86 64 100 73 72 85 ...
+ $ 10       : int  66 63 106 67 85 64 101 73 75 85 ...
+ $ 11       : int  66 63 111 68 84 64 104 73 76 81 ...
+ $ 12       : int  66 63 122 69 90 56 100 73 78 82 ...
+ $ 13       : int  66 63 129 78 99 60 97 73 76 81 ...
+ $ 14       : int  115 63 112 78 97 78 96 73 78 80 ...
+ $ 15       : int  86 63 99 70 93 77 94 198 76 82 ...
+
+### Replacing NAs
+
+Instead of removing the rows with NaN values, we can replace all NaN values with a specific value that does not appear naturally in the input, such as -1.
+The problem can be modeled as-is and we can encourage the model to learn that a specific value means “missing.” 
+
+```{r}
+abp_mean_reshaped_precpb[is.na(abp_mean_reshaped_precpb)]<-(-1)
+```
+
+### Entropy
+
+```{r}
+abp_mean_reshaped_precpb['entropy']<-round(apply(abp_mean_reshaped_precpb[2:ncol(abp_mean_reshaped_precpb)], 1 , entropy ) , 2)
+```
+
+
+Ref: https://machinelearningmastery.com/handle-missing-timesteps-sequence-prediction-problems-python/
+
+### Joining with other data-sets
+ 
+```{r}
+abp_mean_precpb_all_data<-merge(abp_mean_reshaped_precpb,
+                         FinalHemodynamicsDataset%>%
+                          dplyr::select( Case_Name
+                                        ,Gender
+                                        ,Age
+                                        ,Category
+                                        
+                                        ,duration_Surgery_min
+                                        ,duration_CPB_min
+                                        ,duration_preCPB_min
+                                        
+                                        ,STS_RiskAlgorithm
+                                        ,STS_RiskAlgorithm_multiple_imp
+                                        ,STS_RiskAlgorithm_median_imp
+                                        ,total_pressors_formula_mg
+                                        
+                                        # categorical variables
+                                        ,Q_total_pressors_formula_mg
+                                        
+                                        ,T_STS_RiskAlgorithm_median_imp
+                                        ,T_STS_RiskAlgorithm_multiple_imp
+                                        
+                                        ,Q_AUC65MAP_total_mmHgmin
+                                        ,Q_TWA65MAP_total_mmHg
+                                        
+                                        ,Q_AUC65MAP_CPB_mmHgmin
+                                        ,Q_TWA65MAP_CPB_mmHg
+                                        
+                                        ,Q_AUC65MAP_preCPB_mmHgmin
+                                        ,Q_TWA65MAP_preCPB_mmHg
+                                                                                
+                                        
+                                        # Continuous
+                                        
+                                        ,AUC65MAP_total_mmHgmin
+                                        ,TWA65MAP_total_mmHg
+
+                                        ,AUC65MAP_CPB_mmHgmin
+                                        ,TWA65MAP_CPB_mmHg
+                                        
+                                        ,AUC65MAP_preCPB_mmHgmin                                    
+                                        ,TWA65MAP_preCPB_mmHg
+                                                                                                                                                            ,delta_HCT_pct_median_imp
+                                        ,mean_ef_median_imp
+                                        ,Cross_Clamp_Time_imp
+                                        
+
+                                        
+                                        # Outcomes
+                                        ,Any_MAE
+                                        ,Renal_Failure
+                                        ,Death
+                                        ,Stroke
+                                        ,RFDS
+                                        ,RFD
+                                        ,DS
+                                        ,RFS
+
+                                        
+                           ))
+```
+
+### Removing columns where 100% is NA
+
+```{r}
+#abp_mean_precpb_all_data <- abp_mean_precpb_all_data[,colSums(is.na(abp_mean_precpb_all_data))<nrow(abp_mean_precpb_all_data)]
+```
+
+### Imputing mising values in mean_ef_median_imp
+
+there were some mising values in mean_ef_median_imp, imputing mean_ef_median_imp for 81 cases missing
+
+```{r}
+abp_mean_precpb_all_data$mean_ef_median_imp[is.na(abp_mean_precpb_all_data$mean_ef_median_imp)]<-round(mean(abp_mean_precpb_all_data$mean_ef_median_imp,na.rm = T),2)
+```
+
+### Maping variables
+
+We don't need all the variables in our dataset to be numbers anymore
+
+```{r}
+#abp_mean_all_data$Gender<-plyr::revalue(abp_mean_all_data$Gender,c('Female'=1,'Male'=2))
+#abp_mean_all_data$Category<-plyr::revalue(abp_mean_all_data$Category,c('Aortic Surgery'=1,'CABG'=2,'CABG + Valve'=3,'Other'=3,'Valve'=4))
+```
+
+### Generating report
+
+```{r}
+view(dfSummary(abp_mean_precpb_all_data))
+```
+
+### Exporting df
+
+```{r}
+#write.csv(abp_mean_precpb_all_data,'abp_mean_precpb_all_data.csv',row.names = F)
+``` 
+

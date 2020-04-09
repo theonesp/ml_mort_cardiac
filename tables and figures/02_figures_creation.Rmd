@@ -1,0 +1,145 @@
+---
+title: "03_tables_creation"
+output: html_notebook
+---
+
+
+# Environment
+```{r}
+library(readxl)
+library(plotly)
+library(dplyr)
+```
+
+## Load data
+```{r}
+best_models_insights <- read_excel("../documents/best_models_insights.xlsx")
+```
+
+# Figures
+
+```{r}
+trace1 <- list(
+  uid = "f04e3027-450f-457f-87ae-4b5f16d781ed", 
+  mode = "lines+markers+text", 
+  type = "scatter", 
+  x = c("01<br>AUROC<br>STS","02<br>AUROC<br>RF"), 
+  y = c( best_models_insights[2,]$AUROC
+        ,best_models_insights[1,]$AUROC)
+  ,marker = list(
+    size = 12, 
+    color = c("#c0392b","#27ae60")
+  ),
+  line = list(
+    color = '#74b9ff'
+    ),
+  error_y = list(
+    type = "data",
+    color = c("#bdc3c7"), 
+    symmetric = FALSE,
+    visible = TRUE, 
+    array = c( best_models_insights[2,]$`AUROC_uci` - best_models_insights[2,]$AUROC
+              ,best_models_insights[1,]$`AUROC_uci` - best_models_insights[1,]$AUROC),
+    
+    arrayminus = c( best_models_insights[2,]$AUROC - best_models_insights[2,]$`AUROC_lci`
+                   ,best_models_insights[1,]$AUROC - best_models_insights[1,]$`AUROC_lci`)
+  ), 
+  text = c("Esto es el texto")
+)
+trace2 <- list(
+  uid = "f04e3027-450f-457f-87ae-4b5f16d781ed", 
+  mode = "lines+markers+text", 
+  type = "scatter", 
+  x = c("03<br>AP<br>STS","04<br>AP<br>RF"), 
+  y = c( best_models_insights[2,]$AP
+        ,best_models_insights[1,]$AP)
+  ,marker = list(
+    size = 12, 
+    color = c("#c0392b","#27ae60")
+  ),
+  line = list(
+    color = '#74b9ff'
+    ), 
+  error_y = list(
+    type = "data", 
+    color = c("#bdc3c7"), 
+    symmetric = FALSE,
+    visible = TRUE, 
+    array = c( best_models_insights[2,]$`AP_uci` - best_models_insights[2,]$AP
+              ,best_models_insights[1,]$`AP_uci` - best_models_insights[1,]$AP),
+    
+    arrayminus = c( best_models_insights[2,]$AP - best_models_insights[2,]$`AP_lci`
+                   ,best_models_insights[1,]$AP - best_models_insights[1,]$`AP_lci`)
+  ), 
+  text = c("Esto es el texto")
+)
+trace4 <- list(
+  uid = "f04e3027-450f-457f-87ae-4b5f16d781ed", 
+  mode = "lines+markers+text", 
+  type = "scatter", 
+  x = c("05<br>Specificity<br>STS","06<br>Specificity<br>RF"), 
+  y = c(best_models_insights[2,]$Specificity
+       ,best_models_insights[1,]$Specificity  )
+  ,marker = list(
+    size = 12, 
+    color = c("#c0392b","#27ae60")
+  ),
+  line = list(
+    color = '#74b9ff'
+    ), 
+  error_y = list(
+    type = "data", 
+    color = c("#bdc3c7"), 
+    symmetric = FALSE,
+    visible = TRUE, 
+    array = c( best_models_insights[2,]$`Specificity_uci` - best_models_insights[2,]$Specificity
+              ,best_models_insights[1,]$`Specificity_uci` - best_models_insights[1,]$Specificity),
+    
+    arrayminus = c( best_models_insights[2,]$Specificity - best_models_insights[2,]$`Specificity_lci`
+                   ,best_models_insights[1,]$Specificity - best_models_insights[1,]$`Specificity_lci`)
+  ), 
+  text = c("Esto es el texto")
+)
+trace5 <- list(
+  uid = "f04e3027-450f-457f-87ae-4b5f16d781ed", 
+  mode = "lines+markers+text", 
+  type = "scatter", 
+  x = c("07<br>Sensitivity<br>STS","08<br>Sensitivity<br>RF"), 
+  y = c(best_models_insights[2,]$Sensitivity
+       ,best_models_insights[1,]$Sensitivity  )
+  ,marker = list(
+    size = 12, 
+    color = c("#c0392b","#27ae60")
+  ),
+  line = list(
+    color = '#74b9ff'
+    ), 
+  error_y = list(
+    type = "data", 
+    color = c("#bdc3c7"), 
+    symmetric = FALSE,
+    visible = TRUE, 
+    array = c( best_models_insights[2,]$`Sensitivity_uci` - best_models_insights[2,]$Sensitivity
+              ,best_models_insights[1,]$`Sensitivity_uci` - best_models_insights[1,]$Sensitivity),
+    
+    arrayminus = c( best_models_insights[2,]$Sensitivity - best_models_insights[2,]$`Sensitivity_lci`
+                   ,best_models_insights[1,]$Sensitivity - best_models_insights[1,]$`Sensitivity_lci`)
+  ), 
+  text = c("Esto es el texto")
+)
+
+
+data <- list(trace1,trace2,trace4,trace5)
+#layout <- list(title = "Performance Insights with 95% confidence interval")
+p <- plot_ly()
+p <- add_trace(p, uid=trace1$uid, mode=trace1$mode, type=trace1$type, x=trace1$x, y=trace1$y, marker=trace1$marker, line=trace1$line, error_y=trace1$error_y, text=paste(trace1$y,' CI [',trace1$y-trace1$error_y$arrayminus,',',trace1$y+trace1$error_y$array,']',sep = '') ,textposition = 'right')
+p <- add_trace(p, uid=trace2$uid, mode=trace2$mode, type=trace2$type, x=trace2$x, y=trace2$y, marker=trace2$marker, line=trace2$line, error_y=trace2$error_y, text=paste(trace2$y,' CI [',trace2$y-trace2$error_y$arrayminus,',',trace2$y+trace2$error_y$array,']',sep = '') ,textposition = 'right')
+p <- add_trace(p, uid=trace4$uid, mode=trace4$mode, type=trace4$type, x=trace4$x, y=trace4$y, marker=trace4$marker, line=trace4$line, error_y=trace4$error_y, text=paste(trace4$y,' CI [',trace4$y-trace4$error_y$arrayminus,',',trace4$y+trace4$error_y$array,']',sep = '') ,textposition = 'right')
+p <- add_trace(p, uid=trace5$uid, mode=trace5$mode, type=trace5$type, x=trace5$x, y=trace5$y, marker=trace5$marker, line=trace5$line, error_y=trace5$error_y, text=paste(trace5$y,' CI [',trace5$y-trace5$error_y$arrayminus,',',trace5$y+trace5$error_y$array,']',sep = '') ,textposition = 'left')
+p <- layout(p 
+            #,title=layout$title
+            ,showlegend=T
+            ,yaxis = list(range = c(0, 1))
+            )
+```
+
