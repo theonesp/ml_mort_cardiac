@@ -12,7 +12,7 @@ output:
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-# Loading libraries
+# Environment
 
 ```{r message=FALSE, warning=FALSE}
 library(dplyr)
@@ -111,10 +111,20 @@ filter(duration_Surgery_min <= 60)%>%
   select(Case_Name)
 )
 
-cases_to_exclude<-unique(cases_to_exclude$Case_Name)
 
+
+cases_to_exclude<-unique(cases_to_exclude$Case_Name)
+print('Number of Initial cases')
+a<-n_distinct(abp_mean$Case_Name)
+a
 abp_mean_filtered<-abp_mean%>%
   filter(Case_Name %!in% cases_to_exclude)
+print('Number of Cases Excluded due to gaps > 5 minutes or surgery length < 60 minutes.')
+b<-n_distinct(abp_mean_filtered$Case_Name)
+a-b
+print('Number of Final cases')
+b
+
 ```
 
 5979 - 186 (missing sampling gaps > 5 minutes or surgery length < 60 minutes) = 5793
@@ -144,6 +154,7 @@ abp_mean_expanded<-left_join(abp_mean_full_times,abp_mean_filtered%>%select('Cas
 ### Excluding cases with invalid cpb, precpb, postcpb or outsidecpb data-points
 
 ```{r}
+
 # cases with valid cpb data
 abp_mean_valid_cases1<-inner_join(  abp_mean_expanded,  AllPeriodsDF)%>%
   filter(Time>=CPB_Begin_Time & Time<=CPB_End_Time)%>%
@@ -172,7 +183,19 @@ valid_cases<-inner_join(valid_cases,abp_mean_valid_cases4)
 ### Selecting only valid cases from our dataset
 
 ```{r}
+print('Number of Initial cases')
+a<-n_distinct(abp_mean_expanded$Case_Name)
+a
+
+
 abp_mean_expanded<-inner_join(abp_mean_expanded , valid_cases)
+
+print('Number of Cases Excluded due to Inadequate Perioperative Data')
+b<-n_distinct(abp_mean_expanded$Case_Name)
+a-b
+
+print('Number of Final cases')
+n_distinct(abp_mean_expanded$Case_Name)
 ```
 
 
@@ -262,7 +285,9 @@ abp_mean_reshaped[is.na(abp_mean_reshaped)]<-(-1)
 
 ### Entropy
 
-```{r}
+We are not using entropy anymore.
+
+```{r eval=FALSE, include=FALSE}
 abp_mean_reshaped['entropy']<-round(apply(abp_mean_reshaped[2:ncol(abp_mean_reshaped)], 1 , entropy ) , 2)
 ```
 
@@ -274,12 +299,13 @@ _In the end we are not removing data beyond outliers_
 
 _In the end we are not removing data beyond outliers_
 
-
 ```{r eval=FALSE, include=FALSE}
 abp_mean_no_outliers<-abp_mean_reshaped[,1:1791] # we need to add 1 (1790+1) since the first column is Case_Name
 ```
 
 #### Imputing after surgery missing data
+
+*We are not imputing after surgery missing data anymore*
 
 Linear interpolation imputation works vertically, so we transpose the dataframe to have one column per case, instead of one row per case.
 
